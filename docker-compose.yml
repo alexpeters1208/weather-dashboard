@@ -1,0 +1,78 @@
+version: "3.4"
+
+services:
+
+  redpanda:
+    container_name: redpanda
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    command:
+      redpanda \
+      start \
+      --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
+      --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092 \
+      --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081 \
+      --smp 1 \
+      --memory 1G \
+      --mode dev-container \
+      --set redpanda.auto_create_topics_enabled=true
+    ports:
+      - "8081:8081"
+      - "18081:18081"
+      - "9092:9092"
+      - "19092:19092"
+
+  create-topics:
+    container_name: create-topics
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    command:
+      - topic
+      - create
+      - current forecast history future
+      - --brokers redpanda:9092
+    depends_on:
+      - redpanda
+
+  console:
+    container_name: redpanda-console
+    image: docker.redpanda.com/redpandadata/console:v2.3.8
+    restart: on-failure
+    entrypoint: /bin/sh
+    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+          schemaRegistry:
+            enabled: true
+            urls: ["http://redpanda:8081"]
+        connect:
+          enabled: true
+          clusters:
+            - name: datagen
+              url: http://connect:8083
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redpanda
+
+  data:
+    build: data
+    container_name: data-engine
+    image: weather-data-engine
+    env_file:
+      .env
+    depends_on:
+      - create-topics
+    stdin_open: true
+    tty: true
+
+  deephaven:
+    container_name: deephaven
+    image: deephaven/server-jetty:local-build
+    ports:
+      - "10000:10000"
+    volumes:
+      - ./deephaven/data:/data
+    environment:
+      - START_OPTS=-Xmx8g
