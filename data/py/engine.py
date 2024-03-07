@@ -28,70 +28,95 @@ def make_request(endpoint: str, locations: str | Iterable[str], **kwargs):
     if isinstance(locations, str):
         return requests.get(f"http://api.weatherapi.com/v1/{endpoint}.json",
                             headers={"Content-Type": "application/json"},
-                            params={"key": KEY, "q": locations} | kwargs)
+                            params={"key": KEY, "q": locations, "aqi": "yes"} | kwargs)
     else:
         payload = {"locations": [{"q": locations[i], "custom_id": f"loc{i}"} for i in range(len(locations))]}
         return requests.post(f"http://api.weatherapi.com/v1/{endpoint}.json",
                              json=payload,
                              headers={"Content-Type": "application/json"},
-                             params={"key": KEY, "q": "bulk"} | kwargs)
+                             params={"key": KEY, "q": "bulk", "aqi": "yes"} | kwargs)
 
 
 # Makes a request to the API endpoint specified by endpoint and produces the results to the kafka topic of the same name
-def current_to_redpanda(producer, batch_size, locations):
+def current_to_redpanda(producer, topic, batch_size, locations):
 
     # If we need to batch, create batches
-    if not isinstance(locations, str) and len(locations) > batch_size:
-        batch_locs = create_batch_locations(locations, batch_size)
+    if not isinstance(locations, str):
+        if len(locations) > batch_size:
+            batch_locs = create_batch_locations(locations, batch_size)
 
-        # Iterate through all data in each batch, produce innermost json to Kafka to maintain 1-1
-        for batch_num in range(len(batch_locs)):
+            # Iterate through all data in each batch, produce innermost json to Kafka to maintain 1-1
+            for batch_num in range(len(batch_locs)):
 
-            batch_response = make_request("current", batch_locs[batch_num]).json()
-            for response in batch_response['bulk']:
+                batch_response = make_request("current", batch_locs[batch_num]).json()
+                for response in batch_response['bulk']:
 
-                data = response['query']['location'] | response['query']['current']
-                producer.produce(topic="current", key=f"batch{batch_num}",
-                                 value=json.dumps(data).encode('utf-8'))
-                producer.flush()
+                    data = response['query']['location'] | \
+                           response['query']['current'] | \
+                           response['query']['current']['air_quality']
+                    producer.produce(topic=topic, key=f"batch{batch_num}",
+                                     value=json.dumps(data).encode('utf-8'))
+                    producer.flush()
+
+        else:
+            response = make_request("current", locations).json()
+            data = response['bulk']['query']['location'] | \
+                   response['bulk']['query']['current'] | \
+                   response['bulk']['query']['current']['air_quality']
+            producer.produce(topic=topic, key=f"batch0", value=json.dumps(data).encode('utf-8'))
+            producer.flush()
 
     else:
         response = make_request("current", locations).json()
-        data = response['bulk']['query']['location'] | response['bulk']['query']['current']
-        producer.produce(topic="current", key=f"batch0", value=json.dumps(data).encode('utf-8'))
+        data = response['location'] | \
+               response['current'] | \
+               response['current']['air_quality']
+        producer.produce(topic=topic, key=f"batch0", value=json.dumps(data).encode('utf-8'))
         producer.flush()
 
     return None
 
 
-def historical_to_redpanda(producer, batch_size, locations, start_date, end_date):
+def historical_to_redpanda(producer, topic, batch_size, locations, start_date, end_date):
 
     # If we need to batch, create batches
-    if not isinstance(locations, str) and len(locations) > batch_size:
-        batch_locs = create_batch_locations(locations, batch_size)
+    if not isinstance(locations, str):
+        if len(locations) > batch_size:
+            batch_locs = create_batch_locations(locations, batch_size)
 
-        # Iterate through all data in each batch, produce innermost hour to Kafka to maintain 1-1
-        for batch_num in range(len(batch_locs)):
+            # Iterate through all data in each batch, produce innermost hour to Kafka to maintain 1-1
+            for batch_num in range(len(batch_locs)):
 
-            batch_response = make_request(endpoint="history", locations=batch_locs[batch_num],
-                                          dt=start_date, end_dt=end_date).json()
-            for response in batch_response['bulk']:
-                for day in response['query']['forecast']['forecastday']:
-                    for hour in day['hour']:
+                batch_response = make_request(endpoint="history", locations=batch_locs[batch_num],
+                                              dt=start_date, end_dt=end_date).json()
+                for response in batch_response['bulk']:
+                    for day in response['query']['forecast']['forecastday']:
+                        for hour in day['hour']:
 
-                        data = response['query']['location'] | hour
-                        producer.produce(topic="history", key=f"batch{batch_num}",
-                                         value=json.dumps(data).encode('utf-8'))
-                        producer.flush()
+                            data = response['query']['location'] | hour
+                            producer.produce(topic=topic, key=f"batch{batch_num}",
+                                             value=json.dumps(data).encode('utf-8'))
+                            producer.flush()
+
+        else:
+            response = make_request(endpoint="history", locations=locations, dt=start_date, end_dt=end_date).json()
+
+            # Produce innermost hour to Kafka to maintain 1-1
+            for day in response['bulk']['query']['forecast']['forecastday']:
+                for hour in day['hour']:
+                    data = response['bulk']['query']['location'] | hour
+                    producer.produce(topic=topic, key=f"batch0",
+                                     value=json.dumps(data).encode('utf-8'))
+                    producer.flush()
 
     else:
         response = make_request(endpoint="history", locations=locations, dt=start_date, end_dt=end_date).json()
 
         # Produce innermost hour to Kafka to maintain 1-1
-        for day in response['bulk']['query']['forecast']['forecastday']:
+        for day in response['forecast']['forecastday']:
             for hour in day['hour']:
-                data = response['bulk']['query']['location'] | hour
-                producer.produce(topic="history", key=f"batch0",
+                data = response['location'] | hour
+                producer.produce(topic=topic, key=f"batch0",
                                  value=json.dumps(data).encode('utf-8'))
                 producer.flush()
 
@@ -102,6 +127,8 @@ if __name__ == "__main__":
     # Get API key
     load_dotenv()
     KEY = os.getenv("API_KEY") or ""
+
+    CURRENT_LOCATION = "78744"
 
     # Create list of locations from csv lat-long file to use in requests
     texas_coords = []
@@ -116,13 +143,26 @@ if __name__ == "__main__":
 
     # Create kafka producer
     kafka_producer = Producer({'bootstrap.servers': 'redpanda:9092'})
+    #kafka_producer=True
 
     # Produce first batch of data
     current_to_redpanda(producer=kafka_producer,
+                        topic="current-here",
+                        batch_size=50,
+                        locations=CURRENT_LOCATION)
+    current_to_redpanda(producer=kafka_producer,
+                        topic="current",
                         batch_size=50,
                         locations=texas_coords)
     historical_to_redpanda(producer=kafka_producer,
+                           topic="history-here",
                            batch_size=10,
+                           locations=CURRENT_LOCATION,
+                           start_date=str(start_historical),
+                           end_date=str(end_historical))
+    historical_to_redpanda(producer=kafka_producer,
+                           batch_size=10,
+                           topic="history",
                            locations=texas_coords,
                            start_date=str(start_historical),
                            end_date=str(end_historical))
@@ -131,12 +171,30 @@ if __name__ == "__main__":
     schedule.every(5).minutes.do(
         current_to_redpanda,
         producer=kafka_producer,
+        topic="current-here",
+        batch_size=50,
+        locations=CURRENT_LOCATION
+    )
+    schedule.every(5).minutes.do(
+        current_to_redpanda,
+        producer=kafka_producer,
+        topic="current",
         batch_size=50,
         locations=texas_coords
     )
     schedule.every(2).hours.do(
         historical_to_redpanda,
         producer=kafka_producer,
+        topic="history-here",
+        batch_size=10,
+        locations=CURRENT_LOCATION,
+        start_date=str(start_historical),
+        end_date=str(end_historical)
+    )
+    schedule.every(2).hours.do(
+        historical_to_redpanda,
+        producer=kafka_producer,
+        topic="history",
         batch_size=10,
         locations=texas_coords,
         start_date=str(start_historical),

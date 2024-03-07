@@ -1,2 +1,6 @@
 deephaven-plugin-plotly-express
+deephaven-plugin-plotly
+deephaven-plugin-matplotlib
 deephaven-plugin-ui
+plotly-express
+matplotlib

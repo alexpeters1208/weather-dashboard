@@ -27,7 +27,7 @@ services:
     command:
       - topic
       - create
-      - current forecast history future
+      - current forecast history future current-here forecast-here history-here future-here
       - --brokers redpanda:9092
     depends_on:
       - redpanda
@@ -70,7 +70,7 @@ services:
   deephaven:
     build: deephaven
     container_name: deephaven
-    image: deephaven-json-ui-px
+    image: deephaven-weather-app-server
     ports:
       - "10000:10000"
     volumes:
