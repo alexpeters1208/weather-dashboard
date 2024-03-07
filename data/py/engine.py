@@ -2,6 +2,7 @@ import os
 import csv
 import time
 import json
+import uuid
 import requests
 import schedule
 import datetime
@@ -37,21 +38,63 @@ def make_request(endpoint: str, locations: str | Iterable[str], **kwargs):
 
 
 # Makes a request to the API endpoint specified by endpoint and produces the results to the kafka topic of the same name
-def produce_to_redpanda(endpoint, locations, producer, batch_size, **kwargs):
+def current_to_redpanda(producer, batch_size, locations):
 
-    # If we need to batch, create them and produce to redpanda in a loop
+    # If we need to batch, create batches
     if not isinstance(locations, str) and len(locations) > batch_size:
         batch_locs = create_batch_locations(locations, batch_size)
 
-        for i in range(len(batch_locs)):
-            batch_response = make_request(endpoint, batch_locs[i], **kwargs)
-            producer.produce(topic=endpoint, key=f"batch{i}", value=json.dumps(batch_response.json()).encode('utf-8'))
+        # Iterate through all data in each batch, produce innermost json to Kafka to maintain 1-1
+        for batch_num in range(len(batch_locs)):
+
+            batch_response = make_request("current", batch_locs[batch_num]).json()
+            for response in batch_response['bulk']:
+
+                data = response['query']['location'] | response['query']['current']
+                producer.produce(topic="current", key=f"batch{batch_num}",
+                                 value=json.dumps(data).encode('utf-8'))
+                producer.flush()
 
     else:
-        response = make_request(endpoint, locations, **kwargs)
-        producer.produce(topic=endpoint, key="batch0", value=json.dumps(response.json()).encode('utf-8'))
+        response = make_request("current", locations).json()
+        data = response['bulk']['query']['location'] | response['bulk']['query']['current']
+        producer.produce(topic="current", key=f"batch0", value=json.dumps(data).encode('utf-8'))
+        producer.flush()
 
-    producer.flush()
+    return None
+
+
+def historical_to_redpanda(producer, batch_size, locations, start_date, end_date):
+
+    # If we need to batch, create batches
+    if not isinstance(locations, str) and len(locations) > batch_size:
+        batch_locs = create_batch_locations(locations, batch_size)
+
+        # Iterate through all data in each batch, produce innermost hour to Kafka to maintain 1-1
+        for batch_num in range(len(batch_locs)):
+
+            batch_response = make_request(endpoint="history", locations=batch_locs[batch_num],
+                                          dt=start_date, end_dt=end_date).json()
+            for response in batch_response['bulk']:
+                for day in response['query']['forecast']['forecastday']:
+                    for hour in day['hour']:
+
+                        data = response['query']['location'] | hour
+                        producer.produce(topic="history", key=f"batch{batch_num}",
+                                         value=json.dumps(data).encode('utf-8'))
+                        producer.flush()
+
+    else:
+        response = make_request(endpoint="history", locations=locations, dt=start_date, end_dt=end_date).json()
+
+        # Produce innermost hour to Kafka to maintain 1-1
+        for day in response['bulk']['query']['forecast']['forecastday']:
+            for hour in day['hour']:
+                data = response['bulk']['query']['location'] | hour
+                producer.produce(topic="history", key=f"batch0",
+                                 value=json.dumps(data).encode('utf-8'))
+                producer.flush()
+
     return None
 
 
@@ -69,39 +112,35 @@ if __name__ == "__main__":
 
     # Get current date info to bound historical API calls
     end_historical = datetime.datetime.today() - datetime.timedelta(days=1)
-    start_historical = end_historical - datetime.timedelta(days=1)
+    start_historical = end_historical - datetime.timedelta(days=30)
 
     # Create kafka producer
     kafka_producer = Producer({'bootstrap.servers': 'redpanda:9092'})
 
     # Produce first batch of data
-    produce_to_redpanda(endpoint="current",
-                        locations=texas_coords,
-                        producer=kafka_producer,
-                        batch_size=50)
-    produce_to_redpanda(endpoint="history",
-                        locations=texas_coords,
-                        producer=kafka_producer,
-                        batch_size=10,
-                        dt=str(start_historical),
-                        end_dt=str(end_historical))
+    current_to_redpanda(producer=kafka_producer,
+                        batch_size=50,
+                        locations=texas_coords)
+    historical_to_redpanda(producer=kafka_producer,
+                           batch_size=10,
+                           locations=texas_coords,
+                           start_date=str(start_historical),
+                           end_date=str(end_historical))
 
     # Schedule calls to the realtime api every 5 minutes, and to the forecast api every 2 hours
     schedule.every(5).minutes.do(
-        produce_to_redpanda,
-        endpoint="current",
-        locations=texas_coords,
+        current_to_redpanda,
         producer=kafka_producer,
-        batch_size=50
+        batch_size=50,
+        locations=texas_coords
     )
     schedule.every(2).hours.do(
-        produce_to_redpanda,
-        endpoint="history",
-        locations=texas_coords,
+        historical_to_redpanda,
         producer=kafka_producer,
         batch_size=10,
-        dt=str(start_historical),
-        end_dt=str(end_historical)
+        locations=texas_coords,
+        start_date=str(start_historical),
+        end_date=str(end_historical)
     )
 
     while True:

@@ -68,8 +68,9 @@ services:
     tty: true
 
   deephaven:
+    build: deephaven
     container_name: deephaven
-    image: deephaven/server-jetty:local-build
+    image: deephaven-json-ui-px
     ports:
       - "10000:10000"
     volumes:
