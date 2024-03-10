@@ -84,7 +84,7 @@ current = consume(
     offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
     key_spec=KeyValueSpec.IGNORE,
     value_spec=object_processor_spec(json(current_schema)),
-    table_type=TableType.ring(265), # this is not an ideal solution
+    table_type=TableType.ring(265) # this is not an ideal solution
 )
 
 current = current \
@@ -106,7 +106,7 @@ current_here = consume(
     offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
     key_spec=KeyValueSpec.IGNORE,
     value_spec=object_processor_spec(json(current_schema)),
-    table_type=TableType.ring(1), # this is not an ideal solution
+    table_type=TableType.ring(1) # this is not an ideal solution
 )
 
 current_here = current_here \
@@ -128,10 +128,27 @@ historical = consume(
     offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
     key_spec=KeyValueSpec.IGNORE,
     value_spec=object_processor_spec(json(historical_schema)),
-    table_type=TableType.append(),
+    table_type=TableType.append()
 )
 
 historical = historical \
+    .drop_columns([
+        "KafkaPartition",
+        "KafkaOffset",
+        "KafkaTimestamp"]) \
+    .update("tz_id = parseTimeZone(tz_id)") \
+    .rename_columns("time = time_epoch")
+
+historical_here = consume(
+    {"bootstrap.servers": "redpanda:9092"},
+    "history-here",
+    offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
+    key_spec=KeyValueSpec.IGNORE,
+    value_spec=object_processor_spec(json(historical_schema)),
+    table_type=TableType.append()
+)
+
+historical_here = historical_here \
     .drop_columns([
         "KafkaPartition",
         "KafkaOffset",

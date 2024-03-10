@@ -27,7 +27,7 @@ services:
     command:
       - topic
       - create
-      - current forecast history future current-here forecast-here history-here future-here
+      - current history current-here history-here
       - --brokers redpanda:9092
     depends_on:
       - redpanda
