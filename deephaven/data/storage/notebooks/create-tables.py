@@ -7,6 +7,8 @@ from deephaven.stream.kafka.consumer import (
     ALL_PARTITIONS_SEEK_TO_BEGINNING,
 )
 
+config = {"bootstrap.servers": "redpanda:9092"}
+
 current_schema = {
     "name": str,
     "region": str,
@@ -76,18 +78,15 @@ historical_schema = {
     #"us-epa-index": int,
     #"gb-defra-index": int})
 
-# Consume and create real time "blink" table for grid of locations
+# Up-to-date "blink" table for Texas grid
 
 current = consume(
-    {"bootstrap.servers": "redpanda:9092"},
-    "current",
-    offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
-    key_spec=KeyValueSpec.IGNORE,
-    value_spec=object_processor_spec(json(current_schema)),
-    table_type=TableType.ring(265) # this is not an ideal solution
-)
-
-current = current \
+        kafka_config=config,
+        topic="current",
+        offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
+        key_spec=KeyValueSpec.IGNORE,
+        value_spec=object_processor_spec(json(current_schema)),
+        table_type=TableType.ring(1050)) \
     .drop_columns([
         "KafkaPartition",
         "KafkaOffset",
@@ -98,18 +97,15 @@ current = current \
         "last_updated = last_updated_epoch"])
 
 
-# Create and consume real-time table for current location
+# Up-to-date "blink" table for current location
 
 current_here = consume(
-    {"bootstrap.servers": "redpanda:9092"},
-    "current-here",
-    offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
-    key_spec=KeyValueSpec.IGNORE,
-    value_spec=object_processor_spec(json(current_schema)),
-    table_type=TableType.ring(1) # this is not an ideal solution
-)
-
-current_here = current_here \
+        kafka_config=config,
+        topic="current-here",
+        offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
+        key_spec=KeyValueSpec.IGNORE,
+        value_spec=object_processor_spec(json(current_schema)),
+        table_type=TableType.ring(1)) \
     .drop_columns([
         "KafkaPartition",
         "KafkaOffset",
@@ -120,18 +116,15 @@ current_here = current_here \
         "last_updated = last_updated_epoch"])
 
 
-# Consume and create historical append table
+# Historical table for Texas grid
 
 historical = consume(
-    {"bootstrap.servers": "redpanda:9092"},
-    "history",
-    offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
-    key_spec=KeyValueSpec.IGNORE,
-    value_spec=object_processor_spec(json(historical_schema)),
-    table_type=TableType.append()
-)
-
-historical = historical \
+        kafka_config=config,
+        topic="history",
+        offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
+        key_spec=KeyValueSpec.IGNORE,
+        value_spec=object_processor_spec(json(historical_schema)),
+        table_type=TableType.append()) \
     .drop_columns([
         "KafkaPartition",
         "KafkaOffset",
@@ -139,16 +132,15 @@ historical = historical \
     .update("tz_id = parseTimeZone(tz_id)") \
     .rename_columns("time = time_epoch")
 
-historical_here = consume(
-    {"bootstrap.servers": "redpanda:9092"},
-    "history-here",
-    offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
-    key_spec=KeyValueSpec.IGNORE,
-    value_spec=object_processor_spec(json(historical_schema)),
-    table_type=TableType.append()
-)
+# Historical table for current location
 
-historical_here = historical_here \
+historical_here = consume(
+        kafka_config=config,
+        topic="history-here",
+        offsets=ALL_PARTITIONS_SEEK_TO_BEGINNING,
+        key_spec=KeyValueSpec.IGNORE,
+        value_spec=object_processor_spec(json(historical_schema)),
+        table_type=TableType.append()) \
     .drop_columns([
         "KafkaPartition",
         "KafkaOffset",

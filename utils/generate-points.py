@@ -3,14 +3,14 @@ import pandas as pd
 import numpy as np
 
 # Load the shapefile of Texas border and convert to lat-long
-texas_shapefile = gpd.read_file("texas-shapefile/State.shp")  # Replace "path_to_shapefile" with the actual path
+texas_shapefile = gpd.read_file("texas-shapefile/State.shp")
 texas_shapefile_lat_long = texas_shapefile.to_crs(epsg=4326)
 
 # Get bounding box of Texas
 min_long, min_lat, max_long, max_lat = texas_shapefile_lat_long.geometry.total_bounds
 
 # Define grid parameters
-grid_spacing = 0.5  # Adjust this value to change the grid spacing
+grid_spacing = 0.25  # Adjust this value to change the grid spacing
 
 # Generate grid points within the bounding box
 grid_points = []

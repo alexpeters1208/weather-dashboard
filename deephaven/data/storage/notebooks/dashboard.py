@@ -1,40 +1,54 @@
-import json
-import pandas as pd
-import plotly.express as px
+import deephaven.plot.express as dx
+import deephaven.ui as ui
+from deephaven.ui import use_state
 
-texas_url = "https://raw.githubusercontent.com/glynnbird/usstatesgeojson/master/texas.geojson"
+import deephaven.pandas as dhpd
 
-import urllib.request
+@ui.component
+def get_current_location():
+    location_df = dhpd.to_pandas(current_here.select(["name", "region", "country"]))
+    location = location_df.name + ", " + location_df.region + ", " + location_df.country
+    return ui.text(location[0])
 
-def read_geojson(url):
-    with urllib.request.urlopen(url) as url:
-        jdata = json.loads(url.read().decode())
-    return jdata
+@ui.component
+def select_dashboard_topic():
+    return ui.button_group(
+        ui.button("Current Weather"),
+        ui.button("Historcial Weather"),
+        ui.button("Weather Forecasts"))
 
-texas_geojson = read_geojson(texas_url)
-texas_coords = [*texas_geojson['geometry']['coordinates'][0][0], *texas_geojson['geometry']['coordinates'][1][0]]
-texas_data_df = pd.DataFrame(texas_coords, columns=['lon', 'lat'])
-texas_data_df['val'] = [1 for i in range(len(texas_coords))]
+@ui.component
+def current_texas_map():
+    fig = dx.scatter_geo(
+        table=current,
+        lat="lat",
+        lon="lon",
+        color="temp_f",
+        fitbounds="locations",
+        title="Current temperature across Texas"
+    )
+    return ui.panel(fig)
 
-# Creating the choropleth map
-fig = px.choropleth_mapbox(
-    data_frame=texas_data_df,
-    geojson=texas_geojson,
-    locations=texas_data_df.index,
-    color='val',
-    color_continuous_scale="Viridis",
-    mapbox_style="carto-positron",
-    zoom=4.4,
-    center={"lat": 31.5, "lon": -100}
+texas_weather = ui.dashboard(
+    ui.column(
+        ui.panel(
+            ui.row(
+                select_dashboard_topic(),
+                height=15
+            ), title="Selection Pane"
+        ),
+        ui.row(
+            ui.column(
+                current_texas_map(),
+                width=65,
+                title="Current Weather"
+            ),
+            ui.column(
+                get_current_location(),
+                width=35,
+                title="Current Stats"
+            ),
+            height=85
+        )
+    )
 )
-
-import plotly.express as px
-
-fig = px.choropleth(
-    locations=["TX"],
-    locationmode="USA-states",
-    scope="usa",
-    fitbounds="locations",
-    color_discrete_map={"TX": 'Green'})
-fig.update_layout(geo = dict(showlakes=False), showlegend=False)
-fig.show()
