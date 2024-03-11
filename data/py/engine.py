@@ -2,7 +2,6 @@ import os
 import csv
 import time
 import json
-import uuid
 import requests
 import schedule
 import datetime
