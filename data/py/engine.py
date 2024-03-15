@@ -46,30 +46,49 @@ def current_to_redpanda(producer, topic, batch_size, locations):
 
             # Iterate through all data in each batch, produce innermost json to Kafka to maintain 1-1
             for batch_num in range(len(batch_locs)):
-
-                batch_response = make_request("current", batch_locs[batch_num]).json()
+                try:
+                    batch_response = make_request("current", batch_locs[batch_num]).json()
+                except:
+                    pass
                 for response in batch_response['bulk']:
+                    response['query']['current']['air_quality']['us_epa_index'] = response['query']['current']['air_quality'].pop('us-epa-index')
+                    response['query']['current']['air_quality']['gb_defra_index'] = response['query']['current']['air_quality'].pop('gb-defra-index')
 
                     data = response['query']['location'] | \
                            response['query']['current'] | \
-                           response['query']['current']['air_quality']
+                           response['query']['current']['air_quality'] | \
+                           {"condition": response['query']['current']['condition']['text']}
                     producer.produce(topic=topic, key=f"batch{batch_num}",
                                      value=json.dumps(data).encode('utf-8'))
                     producer.flush()
 
         else:
-            response = make_request("current", locations).json()
+            try:
+                response = make_request("current", locations).json()
+            except:
+                pass
+            response['bulk']['query']['current']['air_quality']['us_epa_index'] = response['bulk']['query']['current']['air_quality'].pop('us-epa-index')
+            response['bulk']['query']['current']['air_quality']['gb_defra_index'] = response['bulk']['query']['current']['air_quality'].pop('gb-defra-index')
+
             data = response['bulk']['query']['location'] | \
                    response['bulk']['query']['current'] | \
-                   response['bulk']['query']['current']['air_quality']
+                   response['bulk']['query']['current']['air_quality'] | \
+                   {"condition": response['bulk']['query']['current']['condition']['text']}
             producer.produce(topic=topic, key=f"batch0", value=json.dumps(data).encode('utf-8'))
             producer.flush()
 
     else:
-        response = make_request("current", locations).json()
+        try:
+            response = make_request("current", locations).json()
+        except:
+            pass
+        response['current']['air_quality']['us_epa_index'] = response['current']['air_quality'].pop('us-epa-index')
+        response['current']['air_quality']['gb_defra_index'] = response['current']['air_quality'].pop('gb-defra-index')
+
         data = response['location'] | \
                response['current'] | \
-               response['current']['air_quality']
+               response['current']['air_quality'] | \
+               {"condition": response['current']['condition']['text']}
         producer.produce(topic=topic, key=f"batch0", value=json.dumps(data).encode('utf-8'))
         producer.flush()
 
@@ -80,7 +99,7 @@ def historical_to_redpanda(producer, topic, batch_size, locations, start_date, e
 
     # divide dates into bins of 30 days if necessary, historical API requires start and end to be at most 30 days apart
     date_bins = []
-    for bin_num in range(((end_date - start_date).days // 30)):
+    for bin_num in range(((end_date - start_date).days // 30) + 1):
         if start_date + (bin_num + 1) * datetime.timedelta(days=30) >= end_date:
             date_bins.append((start_date + bin_num * datetime.timedelta(days=30), end_date))
         else:
@@ -95,37 +114,41 @@ def historical_to_redpanda(producer, topic, batch_size, locations, start_date, e
             for date_range in date_bins:
                 # Iterate through all data in each batch, produce innermost hour to Kafka to maintain 1-1
                 for batch_num in range(len(batch_locs)):
-
-                    batch_response = make_request(endpoint="history", locations=batch_locs[batch_num],
-                                                  dt=str(date_range[0]), end_dt=str(date_range[1])).json()
-                    for response in batch_response['bulk']:
-                        for day in response['query']['forecast']['forecastday']:
+                    try:
+                        batch_response = make_request(endpoint="history", locations=batch_locs[batch_num],
+                                                      dt=str(date_range[0]), end_dt=str(date_range[1])).json()
+                    except:
+                        pass
+                    for location_response in batch_response['bulk']:
+                        for day in location_response['query']['forecast']['forecastday']:
                             for hour in day['hour']:
 
-                                data = response['query']['location'] | hour
+                                data = location_response['query']['location'] | hour
                                 producer.produce(topic=topic, key=f"batch{batch_num}",
                                                  value=json.dumps(data).encode('utf-8'))
                                 producer.flush()
 
         else:
             for date_range in date_bins:
-                response = make_request(endpoint="history", locations=locations,
-                                        dt=str(date_range[0]), end_dt=str(date_range[1])).json()
-
-                # Produce innermost hour to Kafka to maintain 1-1
-                for day in response['bulk']['query']['forecast']['forecastday']:
-                    for hour in day['hour']:
-                        data = response['bulk']['query']['location'] | hour
-                        producer.produce(topic=topic, key=f"batch0",
-                                         value=json.dumps(data).encode('utf-8'))
-                        producer.flush()
+                try:
+                    response = make_request(endpoint="history", locations=locations,
+                                            dt=str(date_range[0]), end_dt=str(date_range[1])).json()
+                except:
+                    pass
+                for location_response in response['bulk']:
+                    for day in location_response['query']['forecast']['forecastday']:
+                        for hour in day['hour']:
+                            data = location_response['query']['location'] | hour
+                            producer.produce(topic=topic, key=f"batch0", value=json.dumps(data).encode('utf-8'))
+                            producer.flush()
 
     else:
         for date_range in date_bins:
-            response = make_request(endpoint="history", locations=locations,
-                                    dt=str(date_range[0]), end_dt=str(date_range[1])).json()
-
-            # Produce innermost hour to Kafka to maintain 1-1
+            try:
+                response = make_request(endpoint="history", locations=locations,
+                                        dt=str(date_range[0]), end_dt=str(date_range[1])).json()
+            except:
+                pass
             for day in response['forecast']['forecastday']:
                 for hour in day['hour']:
                     data = response['location'] | hour
@@ -143,12 +166,16 @@ if __name__ == "__main__":
 
     CURRENT_LOCATION = "78744"
 
-    # Create list of locations from csv lat-long file to use in requests
-    texas_coords = []
+    # Create list of locations from csv lat-long file to use in requests. For current weather state-wide
+    current_locations = []
     with open("lat-long.csv", 'r') as file:
         reader = csv.DictReader(file)
         for row in reader:
-            texas_coords.append(f"{row['lat']},{row['long']}")
+            current_locations.append(f"{row['lat']},{row['long']}")
+
+    # Similar list, for historical weather state-wide
+    historical_locations = ["Dallas", "Fort Worth", "Austin", "Houston", "San Antonio", "El Paso",
+                            "Lubbock", "Amarillo", "Arlington", "Corpus Christi", "Galveston"]
 
     # Get current date info to bound historical API calls
     start_historical = datetime.date.today() - datetime.timedelta(days=365)
@@ -166,22 +193,22 @@ if __name__ == "__main__":
     current_to_redpanda(producer=kafka_producer,
                         topic="current",
                         batch_size=50,
-                        locations=texas_coords)
+                        locations=current_locations)
     historical_to_redpanda(producer=kafka_producer,
                            topic="history-here",
-                           batch_size=10,
+                           batch_size=20,
                            locations=CURRENT_LOCATION,
                            start_date=start_historical,
                            end_date=end_historical)
     historical_to_redpanda(producer=kafka_producer,
-                           batch_size=10,
+                           batch_size=20,
                            topic="history",
-                           locations=texas_coords,
+                           locations=historical_locations,
                            start_date=start_historical,
                            end_date=end_historical)
 
-    # Schedule calls to the realtime api every 5 minutes, and to the forecast api every 2 hours
-    schedule.every(5).minutes.do(
+    # Schedule calls to the realtime api every minute, and to the forecast api every 2 hours
+    schedule.every().minute.do(
         current_to_redpanda,
         producer=kafka_producer,
         topic="current-here",
@@ -193,7 +220,7 @@ if __name__ == "__main__":
         producer=kafka_producer,
         topic="current",
         batch_size=50,
-        locations=texas_coords
+        locations=current_locations
     )
     schedule.every(2).hours.do(
         historical_to_redpanda,
@@ -209,7 +236,7 @@ if __name__ == "__main__":
         producer=kafka_producer,
         topic="history",
         batch_size=10,
-        locations=texas_coords,
+        locations=historical_locations,
         start_date=start_historical,
         end_date=end_historical
     )

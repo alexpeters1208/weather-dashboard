@@ -18,6 +18,7 @@ current_schema = {
     "tz_id": str,
     "localtime_epoch": instant_(number_format="s"),
     "last_updated_epoch": instant_(number_format="s"),
+    "condition": str,
     "temp_c": float,
     "temp_f": float,
     "wind_mph": float,
@@ -40,8 +41,9 @@ current_schema = {
     "o3": float,
     "so2": float,
     "pm2_5": float,
-    "pm10": float
-}
+    "pm10": float,
+    "us_epa_index": int,
+    "gb_defra_index": int}
 
 historical_schema = {
     "name": str,
@@ -67,16 +69,7 @@ historical_schema = {
     "feelslike_f": float,
     "uv": float,
     "gust_mph": float,
-    "gust_kph": float,
-    "co": float,
-    "no2": float,
-    "o3": float,
-    "so2": float,
-    "pm2_5": float,
-    "pm10": float
-}
-    #"us-epa-index": int,
-    #"gb-defra-index": int})
+    "gust_kph": float}
 
 # Up-to-date "blink" table for Texas grid
 

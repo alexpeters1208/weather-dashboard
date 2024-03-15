@@ -1,6 +1,4 @@
+deephaven-plugin-ui==0.9.0
 deephaven-plugin-plotly-express
 deephaven-plugin-plotly
-deephaven-plugin-matplotlib
-deephaven-plugin-ui
 plotly-express
-matplotlib

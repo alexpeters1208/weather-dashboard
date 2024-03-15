@@ -10,7 +10,7 @@ texas_shapefile_lat_long = texas_shapefile.to_crs(epsg=4326)
 min_long, min_lat, max_long, max_lat = texas_shapefile_lat_long.geometry.total_bounds
 
 # Define grid parameters
-grid_spacing = 0.25  # Adjust this value to change the grid spacing
+grid_spacing = 0.5  # Adjust this value to change the grid spacing
 
 # Generate grid points within the bounding box
 grid_points = []
